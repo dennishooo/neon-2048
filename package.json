@@ -1,0 +1,27 @@
+{
+  "name": "neon-2048",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A high-performance, cross-platform 2048 with a glass/neon aesthetic. Web + Tauri native.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/node": "^25.8.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1"
+  }
+}

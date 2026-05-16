@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# Tauri / Rust
+src-tauri/target
+src-tauri/gen/schemas
+src-tauri/Cargo.lock
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
