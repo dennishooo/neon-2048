@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  _resetIdCounterForTests,
   createGame,
   gridValues,
   hasMovesAvailable,
   move,
+  reserveIdsForRestoredState,
   stateFromGrid,
   WIN_VALUE,
 } from "./game";
@@ -193,6 +195,147 @@ describe("win / lose detection", () => {
       [2, 8, 16, 32],
     ]);
     expect(hasMovesAvailable(s)).toBe(true);
+  });
+});
+
+describe("tile id reservation (post-restore)", () => {
+  it("restored state + subsequent move yields unique tile ids", () => {
+    // Simulate the production bug: counter starts fresh (page reload),
+    // but the restored state has high tile ids from a long session.
+    _resetIdCounterForTests();
+
+    // A board where "right" actually shifts tiles, so a spawn fires.
+    const restored = stateFromGrid([
+      [2, 0, 4, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ]);
+    // Bump tile ids artificially to simulate "after running to 512".
+    const maxRestoredId = 201;
+    restored.tiles[0]!.id = 200;
+    restored.tiles[1]!.id = maxRestoredId;
+
+    reserveIdsForRestoredState(restored);
+
+    const res = move(restored, "right", createRng(7));
+    expect(res.changed).toBe(true);
+
+    const ids = new Set(res.state.tiles.map((t) => t.id));
+    expect(ids.size).toBe(res.state.tiles.length); // no collisions
+
+    // The spawned tile must carry an id past the restored watermark.
+    expect(res.spawnedId).toBeDefined();
+    expect(res.spawnedId!).toBeGreaterThan(maxRestoredId);
+  });
+
+  it("does not lower nextId if the counter is already past the state's max", () => {
+    _resetIdCounterForTests();
+    // Burn through ids so nextId is at 50.
+    const fresh = createGame({ seed: 1 }).state;
+    expect(fresh.tiles[0]!.id).toBeGreaterThan(0);
+    for (let i = 0; i < 48; i++) {
+      // Force more ids by repeatedly creating tiles via stateFromGrid.
+      stateFromGrid([
+        [2, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+      ]);
+    }
+    // Now restore a state with tiny ids — reserveIds must NOT roll back.
+    const restored = stateFromGrid([
+      [2, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ]);
+    restored.tiles[0]!.id = 2;
+    reserveIdsForRestoredState(restored);
+
+    const res = move(restored, "right", createRng(5));
+    expect(res.changed).toBe(true);
+    const ids = new Set(res.state.tiles.map((t) => t.id));
+    expect(ids.size).toBe(res.state.tiles.length);
+  });
+
+  it("plays through a long sequence (8 -> 16 -> 32 -> 64) without id collisions", () => {
+    _resetIdCounterForTests();
+    let state = stateFromGrid([
+      [4, 4, 0, 0],
+      [4, 4, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ]);
+    const rng = createRng(123);
+    for (let i = 0; i < 30; i++) {
+      const dir = (["left", "up", "right", "down"] as const)[i % 4];
+      const res = move(state, dir, rng);
+      state = res.state;
+      const ids = new Set(state.tiles.map((t) => t.id));
+      expect(ids.size, `move ${i} (${dir}) produced colliding ids`).toBe(state.tiles.length);
+      if (state.over) break;
+    }
+  });
+});
+
+describe("game progression to 2048 (integration)", () => {
+  it("climbs the value ladder via real merges, win flagged exactly once", () => {
+    _resetIdCounterForTests();
+
+    // Seed a near-win position: bottom row primed to make a 1024, top row
+    // already has a 1024 ready to merge with it on the next vertical move.
+    let state = stateFromGrid([
+      [1024, 0, 0, 0],
+      [0, 0, 0, 0],
+      [512, 0, 0, 0],
+      [512, 0, 0, 0],
+    ]);
+    const rng = createRng(2048);
+
+    // First move: collapse 512 + 512 -> 1024 in column 0.
+    const r1 = move(state, "down", rng);
+    expect(r1.changed).toBe(true);
+    expect(r1.gained).toBe(1024);
+    expect(r1.justWon).toBe(false); // not yet
+    state = r1.state;
+
+    // Verify the two 1024s now occupy column 0 (the merged-down one at
+    // the bottom, the original one still at the top after sliding down).
+    const col0 = state.tiles.filter((t) => t.col === 0).sort((a, b) => a.row - b.row);
+    expect(col0.map((t) => t.value)).toContain(1024);
+
+    // Subsequent moves should never collide ids, and the win flag should
+    // fire on exactly the move that creates 2048.
+    let firstWinMoveIdx = -1;
+    let winCount = 0;
+    for (let i = 0; i < 20; i++) {
+      // Always try "down" first so the two 1024s collapse if possible.
+      const dirs = ["down", "left", "right", "up"] as const;
+      let played = false;
+      for (const d of dirs) {
+        const r = move(state, d, rng);
+        if (r.changed) {
+          state = r.state;
+          if (r.justWon) {
+            winCount++;
+            if (firstWinMoveIdx === -1) firstWinMoveIdx = i;
+          }
+          // Id-collision invariant must hold every move.
+          const ids = new Set(state.tiles.map((t) => t.id));
+          expect(ids.size, `move ${i} (${d}) had colliding ids`).toBe(state.tiles.length);
+          played = true;
+          break;
+        }
+      }
+      if (!played || state.over || state.tiles.some((t) => t.value >= WIN_VALUE)) break;
+    }
+
+    // We should have reached 2048 at least once via real merges.
+    expect(state.tiles.some((t) => t.value >= WIN_VALUE)).toBe(true);
+    expect(winCount).toBe(1); // justWon is one-shot
+    expect(firstWinMoveIdx).toBeGreaterThanOrEqual(0);
+    expect(state.won).toBe(true);
   });
 });
 
