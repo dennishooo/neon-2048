@@ -268,8 +268,11 @@ export class Renderer {
   private frame(now: number): void {
     let animating = false;
 
+    // Completed move animations are cleared here so the map doesn't grow
+    // unbounded across moves — previously these were leaked every turn.
     for (const m of this.moves.values()) {
       if (now - m.start < m.duration) animating = true;
+      else this.moves.delete(m.id);
     }
     for (const g of this.ghosts.values()) {
       if (now - g.start < g.duration) animating = true;
