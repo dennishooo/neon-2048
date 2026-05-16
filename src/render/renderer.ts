@@ -1,6 +1,7 @@
 import type { GameState, Tile, TileId } from "../engine/types";
-import { skinFor, type Theme } from "../themes";
+import { type Theme } from "../themes";
 import { clamp01, easeOutBack, easeOutCubic, easeOutQuint } from "./easing";
+import { TileSpriteCache } from "./sprite-cache";
 
 // Base timing. Slides scale up with travel distance; merge pulse triggers
 // once the slide lands; spawn waits for the slide to finish so it doesn't
@@ -74,6 +75,12 @@ export class Renderer {
   private theme: Theme;
   private reducedMotion: boolean;
 
+  /** Pre-rendered tile faces. Rebuilt on resize and on theme change. */
+  private sprites: TileSpriteCache;
+  /** Last cell px size used to build the cache; if the canvas resizes
+   * enough we rebuild so the sprites stay sharp. */
+  private cachedCellPx = 0;
+
   private rafHandle = 0;
   private dirty = true;
 
@@ -84,10 +91,13 @@ export class Renderer {
     this.ctx = ctx;
     this.theme = opts.theme;
     this.reducedMotion = opts.reducedMotion;
+    this.sprites = new TileSpriteCache(this.theme, 64, 1);
   }
 
   setTheme(theme: Theme): void {
     this.theme = theme;
+    // Invalidate sprite cache — palettes changed.
+    this.sprites.reset(theme, this.cachedCellPx || 64, this.dpr);
     this.dirty = true;
   }
 
@@ -222,6 +232,19 @@ export class Renderer {
     if (this.canvas.width !== px || this.canvas.height !== px) {
       this.canvas.width = px;
       this.canvas.height = px;
+    }
+    // Recompute cell px and rebuild the sprite cache if the cell size
+    // shifted enough to matter (>1px CSS).
+    const state = this.state;
+    if (state) {
+      const pad = cssSize * 0.04;
+      const inner = cssSize - pad * 2;
+      const gap = inner * 0.022;
+      const cell = (inner - gap * (state.size - 1)) / state.size;
+      if (Math.abs(cell - this.cachedCellPx) > 1) {
+        this.cachedCellPx = cell;
+        this.sprites.reset(this.theme, cell, dpr);
+      }
     }
     this.dirty = true;
   }
@@ -407,58 +430,22 @@ export class Renderer {
     scale: number,
     alpha: number,
   ): void {
-    const skin = skinFor(this.theme, value);
+    const sprite = this.sprites.get(value, this.theme);
+    // The sprite is oversized vs. the cell to give the glow halo room.
+    // Compute its draw rect using the same ratios the cache used.
+    const spriteCss = size * 1.18 * 1.3 * scale;
     const cx = x + size / 2;
     const cy = y + size / 2;
-    const s = size * scale;
-    const tx = cx - s / 2;
-    const ty = cy - s / 2;
-    const r = s * 0.14;
+    const dx = cx - spriteCss / 2;
+    const dy = cy - spriteCss / 2;
 
-    ctx.save();
-    ctx.globalAlpha = alpha;
-
-    // Outer glow
-    ctx.shadowColor = skin.glow;
-    ctx.shadowBlur = size * 0.28;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-
-    // Body — vertical gradient.
-    const grad = ctx.createLinearGradient(tx, ty, tx, ty + s);
-    grad.addColorStop(0, skin.from);
-    grad.addColorStop(1, skin.to);
-    roundRect(ctx, tx, ty, s, s, r);
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur = 0;
-
-    // Glassy highlight
-    const hl = ctx.createLinearGradient(tx, ty, tx, ty + s * 0.55);
-    hl.addColorStop(0, "rgba(255,255,255,0.22)");
-    hl.addColorStop(1, "rgba(255,255,255,0)");
-    roundRect(ctx, tx + s * 0.06, ty + s * 0.06, s * 0.88, s * 0.45, r * 0.8);
-    ctx.fillStyle = hl;
-    ctx.fill();
-
-    // Border
-    roundRect(ctx, tx + 0.5, ty + 0.5, s - 1, s - 1, r);
-    ctx.strokeStyle = "rgba(255,255,255,0.10)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Number
-    const text = String(value);
-    const fontSize = fontSizeFor(text, s);
-    ctx.fillStyle = skin.fg;
-    ctx.font = `800 ${fontSize}px ui-sans-serif, system-ui, -apple-system, "SF Pro Display", "Segoe UI", Roboto, Inter, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, cx, cy + fontSize * 0.04);
-
-    ctx.restore();
+    const needAlpha = alpha < 1;
+    if (needAlpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+    }
+    ctx.drawImage(sprite, dx, dy, spriteCss, spriteCss);
+    if (needAlpha) ctx.restore();
   }
 }
 
@@ -482,12 +469,4 @@ function roundRect(
   ctx.arcTo(x, y + h, x, y, rr);
   ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
-}
-
-function fontSizeFor(text: string, tileSize: number): number {
-  const base = tileSize * 0.42;
-  if (text.length <= 2) return base;
-  if (text.length === 3) return base * 0.82;
-  if (text.length === 4) return base * 0.7;
-  return base * 0.58;
 }

@@ -491,3 +491,38 @@ body {
     transition-duration: 1ms !important;
   }
 }
+
+/* On touch devices (phones, tablets) drop the heavy compositor effects.
+ * The 3 radial-gradient glows and several `backdrop-filter: blur()` layers
+ * look great on desktop but are expensive on mobile GPUs / Safari and the
+ * tile board covers most of the page anyway. */
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body {
+    background:
+      radial-gradient(900px 700px at 50% 0%, var(--glow-a), transparent 60%),
+      linear-gradient(180deg, var(--bg-0), var(--bg-1));
+  }
+
+  .score-card,
+  .btn,
+  .theme-menu,
+  .overlay,
+  .toast {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* Solidify the card backgrounds slightly so they stay readable without
+   * the blur effect. */
+  .score-card,
+  .btn,
+  .theme-menu,
+  .toast {
+    background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  }
+}
