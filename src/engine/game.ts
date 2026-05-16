@@ -10,6 +10,34 @@ function newId(): TileId {
   return nextId++;
 }
 
+/**
+ * Bump the internal tile-id counter past every id in `state`.
+ *
+ * Tile IDs are a module-level counter, so a saved game restored on a
+ * fresh page load would otherwise collide: `nextId` starts at 1, but the
+ * restored tiles already hold high ids (~hundreds, after a long session).
+ * The next spawned tile would reuse a live id, breaking the renderer's
+ * per-id animation maps.
+ *
+ * Call this after restoring a saved game and before any subsequent move.
+ */
+export function reserveIdsForRestoredState(state: GameState): void {
+  let max = 0;
+  for (const t of state.tiles) {
+    if (t.id > max) max = t.id;
+  }
+  if (nextId <= max) nextId = max + 1;
+}
+
+/**
+ * Test-only: reset the id counter so id-numbering is independent between
+ * test cases. Not exported via the package's main entry — consumers
+ * outside tests should never need this.
+ */
+export function _resetIdCounterForTests(): void {
+  nextId = 1;
+}
+
 /** Internal: snapshot used to detect "did anything change". Cheap and exact. */
 function tilesFingerprint(tiles: Tile[]): string {
   const sorted = [...tiles].sort((a, b) =>

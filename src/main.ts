@@ -1,5 +1,12 @@
 import "./styles.css";
-import { createGame, hasMovesAvailable, move, WIN_VALUE } from "./engine/game";
+import {
+  createGame,
+  hasMovesAvailable,
+  move,
+  reserveIdsForRestoredState,
+  WIN_VALUE,
+} from "./engine/game";
+import { createRng } from "./engine/rng";
 import type { Direction, GameState } from "./engine/types";
 import { attachInput } from "./input";
 import { registerServiceWorker } from "./pwa";
@@ -62,12 +69,21 @@ let undoStack: GameState[] = [];
 let winShown = false;
 
 if (loaded.ok) {
-  // Carry over the saved state, but make a fresh RNG (we don't persist
-  // RNG seed — future spawns can be non-deterministic).
-  const fresh = createGame({ best });
-  game = { state: { ...loaded.game.state, best }, rng: fresh.rng };
+  // Carry over the saved state with a fresh, unseeded RNG. We don't call
+  // createGame() here because it would burn 2 tile ids (and 2 RNG draws)
+  // on starter tiles we'd immediately throw away — and the wasted ids
+  // were part of the original collision bug.
+  game = { state: { ...loaded.game.state, best }, rng: createRng() };
   if (loaded.game.undo) undoStack = [loaded.game.undo];
   winShown = loaded.game.winShown;
+  // CRITICAL: tile ids are a module-level counter that starts at 1 on each
+  // page load. Saved tiles carry ids from the previous session (hundreds,
+  // after a long game). Without bumping the counter past the restored max,
+  // the next spawn reuses a live id and the renderer's per-id animation
+  // maps collide — visible as disappearing or wrong-color tiles after
+  // ~512 (the point at which sessions get long enough for ids to collide).
+  reserveIdsForRestoredState(game.state);
+  if (loaded.game.undo) reserveIdsForRestoredState(loaded.game.undo);
   // Make sure "over" reflects current reality in case we changed move-detection.
   game.state.over = !hasMovesAvailable(game.state);
 } else {
