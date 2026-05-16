@@ -4,7 +4,14 @@ import type { Direction, GameState } from "./engine/types";
 import { attachInput } from "./input";
 import { registerServiceWorker } from "./pwa";
 import { Renderer } from "./render/renderer";
-import { loadBest, saveBest } from "./storage";
+import {
+  clearGame,
+  loadBest,
+  loadGame,
+  saveBest,
+  saveGame,
+  type SavedGame,
+} from "./storage";
 import {
   applyChrome,
   getTheme,
@@ -29,6 +36,7 @@ const undoBtn = $("btn-undo") as HTMLButtonElement;
 const newBtn = $("btn-new") as HTMLButtonElement;
 const themeBtn = $("btn-theme") as HTMLButtonElement;
 const themeMenu = $("theme-menu");
+const toastEl = $("toast");
 const overlay = $("overlay");
 const overlayCard = overlay.querySelector(".overlay-card") as HTMLElement;
 const overlayTitle = $("overlay-title");
@@ -46,9 +54,33 @@ applyChrome(theme);
 
 const renderer = new Renderer(canvas, { theme, reducedMotion });
 
-let game = createGame({ best: loadBest() });
+// --- restore saved game (if any) ---
+const best = loadBest();
+const loaded = loadGame();
+let game: { state: GameState; rng: ReturnType<typeof createGame>["rng"] };
 let undoStack: GameState[] = [];
 let winShown = false;
+
+if (loaded.ok) {
+  // Carry over the saved state, but make a fresh RNG (we don't persist
+  // RNG seed — future spawns can be non-deterministic).
+  const fresh = createGame({ best });
+  game = { state: { ...loaded.game.state, best }, rng: fresh.rng };
+  if (loaded.game.undo) undoStack = [loaded.game.undo];
+  winShown = loaded.game.winShown;
+  // Make sure "over" reflects current reality in case we changed move-detection.
+  game.state.over = !hasMovesAvailable(game.state);
+} else {
+  game = createGame({ best });
+  if (loaded.reason === "corrupt" || loaded.reason === "version") {
+    showToast(
+      loaded.reason === "version"
+        ? "Saved game from a newer version — started fresh."
+        : "Couldn't restore saved game — started fresh.",
+    );
+  }
+}
+
 let lastScoreShown = -1;
 let lastBestShown = -1;
 
@@ -100,6 +132,35 @@ function resetGame(): void {
   hideOverlay();
   renderer.setState(game.state);
   refreshHud(0);
+  // Drop the previous save so closing now doesn't reload the old board.
+  clearGame();
+  // Persist the new starting position so it survives an immediate close too.
+  persist();
+}
+
+function currentSnapshot(): SavedGame {
+  return {
+    state: game.state,
+    undo: undoStack[undoStack.length - 1] ?? null,
+    winShown,
+  };
+}
+
+function persist(): void {
+  saveGame(currentSnapshot());
+}
+
+function showToast(message: string, ms = 2800): void {
+  toastEl.textContent = message;
+  toastEl.classList.remove("out");
+  toastEl.hidden = false;
+  window.setTimeout(() => {
+    toastEl.classList.add("out");
+    window.setTimeout(() => {
+      toastEl.hidden = true;
+      toastEl.classList.remove("out");
+    }, 240);
+  }, ms);
 }
 
 function handleMove(dir: Direction): void {
@@ -125,6 +186,9 @@ function handleMove(dir: Direction): void {
   } else if (game.state.over) {
     setTimeout(() => showOverlay("lose"), 380);
   }
+
+  // Save after every successful move so progress survives a forced close.
+  persist();
 }
 
 function handleUndo(): void {
@@ -135,6 +199,7 @@ function handleUndo(): void {
   hideOverlay();
   renderer.setState(game.state);
   refreshHud(prev.score);
+  persist();
 }
 
 // ---------- Theme menu ----------
@@ -237,6 +302,14 @@ function bindUi(): void {
     reducedMotion = e.matches;
     renderer.setReducedMotion(reducedMotion);
   });
+
+  // Save aggressively when the app is being backgrounded. iOS Safari is
+  // particularly eager to kill backgrounded tabs, and `pagehide` is the
+  // last hook we get on mobile. `visibilitychange` covers tab switches.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") persist();
+  });
+  window.addEventListener("pagehide", persist);
 }
 
 function bindResize(): void {
@@ -254,6 +327,13 @@ renderer.setState(game.state);
 renderer.resize();
 renderer.start();
 refreshHud(0);
+
+// If we restored a finished game, surface the lose overlay so it doesn't
+// look interactive. (We don't re-show the win overlay — winShown was
+// persisted so the user isn't pestered every reload.)
+if (game.state.over) {
+  showOverlay("lose");
+}
 
 canvas.focus();
 
