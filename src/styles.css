@@ -54,11 +54,18 @@ body {
 }
 
 #app {
+  /* Honor iOS notch / status bar / home indicator. `max()` keeps the
+   * default visual padding on desktop while letting the safe-area inset
+   * win on devices that report one (iPhone X+, Android cutouts). */
+  --pad: clamp(14px, 2.4vmin, 28px);
   display: grid;
   grid-template-rows: auto 1fr auto;
-  gap: clamp(14px, 2.4vmin, 28px);
+  gap: var(--pad);
   height: 100dvh;
-  padding: clamp(14px, 2.4vmin, 28px);
+  padding-top: max(var(--pad), env(safe-area-inset-top));
+  padding-right: max(var(--pad), env(safe-area-inset-right));
+  padding-bottom: max(var(--pad), env(safe-area-inset-bottom));
+  padding-left: max(var(--pad), env(safe-area-inset-left));
   max-width: 720px;
   margin: 0 auto;
 }
