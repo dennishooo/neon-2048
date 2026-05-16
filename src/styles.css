@@ -199,6 +199,10 @@ body {
   backdrop-filter: blur(10px);
   border-radius: 22px;
   animation: fadeIn 240ms ease-out;
+  /* Backdrop is non-interactive so it can't swallow a stray pointerup
+   * meant for the canvas underneath. The card re-enables pointer events
+   * for its buttons below. */
+  pointer-events: none;
 }
 
 .overlay[hidden] {
@@ -212,6 +216,7 @@ body {
   border: 1px solid var(--border);
   text-align: center;
   min-width: 240px;
+  pointer-events: auto;
 }
 
 .overlay-title {
